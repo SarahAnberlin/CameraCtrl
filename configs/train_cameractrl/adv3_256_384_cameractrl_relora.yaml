@@ -96,4 +96,3 @@ checkpointing_steps:  1000
 mixed_precision_training: true
 global_seed: 42
 logger_interval: 10
-

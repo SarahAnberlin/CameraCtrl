@@ -1,7 +1,7 @@
 # Adapted from https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/unet_2d_condition.py
 import os
 import json
-import safetensors
+from safetensors.torch import load_file
 import logging
 import torch
 import torch.nn as nn
@@ -19,6 +19,7 @@ from diffusers.utils import BaseOutput, logging
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusers.loaders import AttnProcsLayers, UNet2DConditionLoadersMixin
+from cameractrl.models.pose_adaptor import CameraPoseEncoder
 
 from cameractrl.models.unet_blocks import (
     CrossAttnDownBlock3D,
@@ -40,6 +41,7 @@ from cameractrl.models.resnet import (
     FusionBlock2D
 )
 
+
 @dataclass
 class UNet3DConditionOutput(BaseOutput):
     sample: torch.FloatTensor
@@ -58,17 +60,17 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             flip_sin_to_cos: bool = True,
             freq_shift: int = 0,
             down_block_types: Tuple[str] = (
-                    "CrossAttnDownBlock3D",
-                    "CrossAttnDownBlock3D",
-                    "CrossAttnDownBlock3D",
-                    "DownBlock3D",
+                "CrossAttnDownBlock3D",
+                "CrossAttnDownBlock3D",
+                "CrossAttnDownBlock3D",
+                "DownBlock3D",
             ),
             mid_block_type: str = "UNetMidBlock3DCrossAttn",
             up_block_types: Tuple[str] = (
-                    "UpBlock3D",
-                    "CrossAttnUpBlock3D",
-                    "CrossAttnUpBlock3D",
-                    "CrossAttnUpBlock3D",
+                "UpBlock3D",
+                "CrossAttnUpBlock3D",
+                "CrossAttnUpBlock3D",
+                "CrossAttnUpBlock3D",
             ),
             only_cross_attention: Union[bool, Tuple[bool]] = False,
             block_out_channels: Tuple[int] = (320, 640, 1280, 1280),
@@ -105,19 +107,24 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         time_embed_dim = block_out_channels[0] * 4
 
         # input
-        self.conv_in = InflatedConv3d(in_channels, block_out_channels[0], kernel_size=3, padding=(1, 1))
+        self.conv_in = InflatedConv3d(
+            in_channels, block_out_channels[0], kernel_size=3, padding=(1, 1))
 
         # time
-        self.time_proj = Timesteps(block_out_channels[0], flip_sin_to_cos, freq_shift)
+        self.time_proj = Timesteps(
+            block_out_channels[0], flip_sin_to_cos, freq_shift)
         timestep_input_dim = block_out_channels[0]
 
-        self.time_embedding = TimestepEmbedding(timestep_input_dim, time_embed_dim)
+        self.time_embedding = TimestepEmbedding(
+            timestep_input_dim, time_embed_dim)
 
         # class embedding
         if class_embed_type is None and num_class_embeds is not None:
-            self.class_embedding = nn.Embedding(num_class_embeds, time_embed_dim)
+            self.class_embedding = nn.Embedding(
+                num_class_embeds, time_embed_dim)
         elif class_embed_type == "timestep":
-            self.class_embedding = TimestepEmbedding(timestep_input_dim, time_embed_dim)
+            self.class_embedding = TimestepEmbedding(
+                timestep_input_dim, time_embed_dim)
         elif class_embed_type == "identity":
             self.class_embedding = nn.Identity(time_embed_dim, time_embed_dim)
         else:
@@ -142,7 +149,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         )
 
         if isinstance(only_cross_attention, bool):
-            only_cross_attention = [only_cross_attention] * len(down_block_types)
+            only_cross_attention = [
+                only_cross_attention] * len(down_block_types)
 
         if isinstance(attention_head_dim, int):
             attention_head_dim = (attention_head_dim,) * len(down_block_types)
@@ -174,7 +182,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 upcast_attention=upcast_attention,
                 resnet_time_scale_shift=resnet_time_scale_shift,
 
-                use_motion_module=use_motion_module and (res in motion_module_resolutions),
+                use_motion_module=use_motion_module and (
+                    res in motion_module_resolutions),
                 motion_module_type=motion_module_type,
                 motion_module_kwargs=motion_module_kwargs,
             )
@@ -244,7 +253,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
             prev_output_channel = output_channel
             output_channel = reversed_block_out_channels[i]
-            input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]
+            input_channel = reversed_block_out_channels[min(
+                i + 1, len(block_out_channels) - 1)]
 
             # add upsample block for all BUT final layer
             if not is_final_block:
@@ -272,7 +282,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 upcast_attention=upcast_attention,
                 resnet_time_scale_shift=resnet_time_scale_shift,
 
-                use_motion_module=use_motion_module and (res in motion_module_resolutions),
+                use_motion_module=use_motion_module and (
+                    res in motion_module_resolutions),
                 motion_module_type=motion_module_type,
                 motion_module_kwargs=motion_module_kwargs,
             )
@@ -280,20 +291,24 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             prev_output_channel = output_channel
 
         # out
-        self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=norm_num_groups, eps=norm_eps)
+        self.conv_norm_out = nn.GroupNorm(
+            num_channels=block_out_channels[0], num_groups=norm_num_groups, eps=norm_eps)
         self.conv_act = nn.SiLU()
-        self.conv_out = InflatedConv3d(block_out_channels[0], out_channels, kernel_size=3, padding=1)
+        self.conv_out = InflatedConv3d(
+            block_out_channels[0], out_channels, kernel_size=3, padding=1)
 
     def set_image_layer_lora(self, image_layer_lora_rank: int = 128):
         lora_attn_procs = {}
         for name in self.attn_processors.keys():
             self.logger.info(f"(add lora) {name}")
-            cross_attention_dim = None if name.endswith("attn1.processor") else self.config.cross_attention_dim
+            cross_attention_dim = None if name.endswith(
+                "attn1.processor") else self.config.cross_attention_dim
             if name.startswith("mid_block"):
                 hidden_size = self.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
                 block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(self.config.block_out_channels))[block_id]
+                hidden_size = list(reversed(self.config.block_out_channels))[
+                    block_id]
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = self.config.block_out_channels[block_id]
@@ -306,17 +321,22 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         self.set_attn_processor(lora_attn_procs)
 
         lora_layers = AttnProcsLayers(self.attn_processors)
-        self.logger.info(f"(lora parameters): {sum(p.numel() for p in lora_layers.parameters()) / 1e6:.3f} M")
+        self.logger.info(
+            f"(lora parameters): {sum(p.numel() for p in lora_layers.parameters()) / 1e6:.3f} M")
         del lora_layers
 
     def set_image_layer_lora_scale(self, lora_scale: float = 1.0):
-        for block in self.down_blocks: setattr(block, "lora_scale", lora_scale)
-        for block in self.up_blocks:   setattr(block, "lora_scale", lora_scale)
+        for block in self.down_blocks:
+            setattr(block, "lora_scale", lora_scale)
+        for block in self.up_blocks:
+            setattr(block, "lora_scale", lora_scale)
         setattr(self.mid_block, "lora_scale", lora_scale)
 
     def set_motion_module_lora_scale(self, lora_scale: float = 1.0):
-        for block in self.down_blocks: setattr(block, "motion_lora_scale", lora_scale)
-        for block in self.up_blocks: setattr(block, "motion_lora_scale", lora_scale)
+        for block in self.down_blocks:
+            setattr(block, "motion_lora_scale", lora_scale)
+        for block in self.up_blocks:
+            setattr(block, "motion_lora_scale", lora_scale)
         setattr(self.mid_block, "motion_lora_scale", lora_scale)
 
     @property
@@ -336,7 +356,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     processors[f"{name}.processor"] = module.processor
 
             for sub_name, child in module.named_children():
-                fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
+                fn_recursive_add_processors(
+                    f"{name}.{sub_name}", child, processors)
 
             return processors
 
@@ -372,10 +393,12 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     if not isinstance(processor, dict):
                         module.set_processor(processor)
                     else:
-                        module.set_processor(processor.pop(f"{name}.processor"))
+                        module.set_processor(
+                            processor.pop(f"{name}.processor"))
 
             for sub_name, child in module.named_children():
-                fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)
+                fn_recursive_attn_processor(
+                    f"{name}.{sub_name}", child, processor)
 
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
@@ -389,7 +412,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 hidden_size = self.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
                 block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(self.config.block_out_channels))[block_id]
+                hidden_size = list(reversed(self.config.block_out_channels))[
+                    block_id]
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = self.config.block_out_channels[block_id]
@@ -422,7 +446,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     processors[f"{name}.processor"] = module.processor
 
             for sub_name, child in module.named_children():
-                fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
+                fn_recursive_add_processors(
+                    f"{name}.{sub_name}", child, processors)
 
             return processors
 
@@ -458,10 +483,12 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     if not isinstance(processor, dict):
                         module.set_processor(processor)
                     else:
-                        module.set_processor(processor.pop(f"{name}.processor"))
+                        module.set_processor(
+                            processor.pop(f"{name}.processor"))
 
             for sub_name, child in module.named_children():
-                fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)
+                fn_recursive_attn_processor(
+                    f"{name}.{sub_name}", child, processor)
 
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
@@ -503,7 +530,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             # make smallest slice possible
             slice_size = num_slicable_layers * [1]
 
-        slice_size = num_slicable_layers * [slice_size] if not isinstance(slice_size, list) else slice_size
+        slice_size = num_slicable_layers * \
+            [slice_size] if not isinstance(slice_size, list) else slice_size
 
         if len(slice_size) != len(sliceable_head_dims):
             raise ValueError(
@@ -515,7 +543,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             size = slice_size[i]
             dim = sliceable_head_dims[i]
             if size is not None and size > dim:
-                raise ValueError(f"size {size} has to be smaller or equal to {dim}.")
+                raise ValueError(
+                    f"size {size} has to be smaller or equal to {dim}.")
 
         # Recursively walk through all the children.
         # Any children which exposes the set_attention_slice method
@@ -580,7 +609,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         upsample_size = None
 
         if any(s % default_overall_up_factor != 0 for s in sample.shape[-2:]):
-            self.logger.info("Forward upsample size to force interpolation output size.")
+            self.logger.info(
+                "Forward upsample size to force interpolation output size.")
             forward_upsample_size = True
 
         # prepare attention_mask
@@ -601,7 +631,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 dtype = torch.float32 if is_mps else torch.float64
             else:
                 dtype = torch.int32 if is_mps else torch.int64
-            timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
+            timesteps = torch.tensor(
+                [timesteps], dtype=dtype, device=sample.device)
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
 
@@ -618,7 +649,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         if self.class_embedding is not None:
             if class_labels is None:
-                raise ValueError("class_labels should be provided when num_class_embeds > 0")
+                raise ValueError(
+                    "class_labels should be provided when num_class_embeds > 0")
 
             if self.config.class_embed_type == "timestep":
                 class_labels = self.time_proj(class_labels)
@@ -628,7 +660,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # extend encoder_hidden_states
         video_length = sample.shape[2]
-        encoder_hidden_states = repeat(encoder_hidden_states, "b n c -> (b f) n c", f=video_length)
+        encoder_hidden_states = repeat(
+            encoder_hidden_states, "b n c -> (b f) n c", f=video_length)
 
         # emb_single = emb
         # emb = repeat(emb, "b c -> (b f) c", f=video_length)
@@ -671,12 +704,15 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             for sample_idx, fuser in enumerate(down_fuser):
                 if fuser != None:
                     fused_sample = fuser(
-                        init_hidden_state=res_samples[sample_idx][:, :, :1].contiguous(),
-                        post_hidden_states=res_samples[sample_idx][:, :, 1:].contiguous(),
+                        init_hidden_state=res_samples[sample_idx][:, :, :1].contiguous(
+                        ),
+                        post_hidden_states=res_samples[sample_idx][:, :, 1:].contiguous(
+                        ),
                         temb=emb_single,
                     )
                     res_samples = list(res_samples)
-                    res_samples[sample_idx] = torch.cat([res_samples[sample_idx][:, :, :1], fused_sample], dim=2)
+                    res_samples[sample_idx] = torch.cat(
+                        [res_samples[sample_idx][:, :, :1], fused_sample], dim=2)
                     res_samples = tuple(res_samples)
 
             down_block_res_samples += res_samples
@@ -691,7 +727,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 if len(down_block_additional_residual.shape) == 4:
                     # b c h w
                     # if input single condition, apply it to all frames
-                    down_block_additional_residual = down_block_additional_residual.unsqueeze(2)
+                    down_block_additional_residual = down_block_additional_residual.unsqueeze(
+                        2)
                     # boardcast will solve the problem
                     # down_block_additional_residual = repeat(down_block_additional_residual, "b c f h w -> b c (f n) h w", n=video_length)
 
@@ -718,7 +755,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         # support controlnet
         if mid_block_additional_residual is not None:
             if len(mid_block_additional_residual.shape) == 4:
-                mid_block_additional_residual = mid_block_additional_residual.unsqueeze(2)
+                mid_block_additional_residual = mid_block_additional_residual.unsqueeze(
+                    2)
                 # boardcast will solve this problemq
                 # mid_block_additional_residual = repeat(mid_block_additional_residual, "b c f h w -> b c (f n) h w", n=video_length)
 
@@ -729,7 +767,8 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             is_final_block = i == len(self.up_blocks) - 1
 
             res_samples = down_block_res_samples[-len(upsample_block.resnets):]
-            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+            down_block_res_samples = down_block_res_samples[: -len(
+                upsample_block.resnets)]
 
             # if we have not reached the final block and need to forward the
             # upsample size, we do it here
@@ -774,10 +813,12 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
     @classmethod
     def from_pretrained_2d(cls, pretrained_model_path, subfolder=None, unet_additional_kwargs=None, logger=None):
         if logger is not None:
-            logger.info(f"Loading unet's pretrained weights from {pretrained_model_path} ...")
+            logger.info(
+                f"Loading unet's pretrained weights from {pretrained_model_path} ...")
 
         if subfolder is not None:
-            pretrained_model_path = os.path.join(pretrained_model_path, subfolder)
+            pretrained_model_path = os.path.join(
+                pretrained_model_path, subfolder)
 
         config_file = os.path.join(pretrained_model_path, 'config.json')
         if not os.path.isfile(config_file):
@@ -802,24 +843,29 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
 
-        model, unused_kwargs = cls.from_config(config, return_unused_kwargs=True, **unet_additional_kwargs)
+        model, unused_kwargs = cls.from_config(
+            config, return_unused_kwargs=True, **unet_additional_kwargs)
         if logger is not None:
-            logger.info(f"please check unused kwargs in 'unet_additional_kwargs' config:")
+            logger.info(
+                f"please check unused kwargs in 'unet_additional_kwargs' config:")
         for k, v in unused_kwargs.items():
             if logger is not None:
                 logger.info(f"{k:50s}: {repr(v)}")
 
-        model_file = os.path.join(pretrained_model_path, SAFETENSORS_WEIGHTS_NAME)
+        model_file = os.path.join(
+            pretrained_model_path, SAFETENSORS_WEIGHTS_NAME)
         if not os.path.isfile(model_file):
             raise RuntimeError(f"{model_file} does not exist")
 
-        state_dict = safetensors.torch.load_file(model_file, device="cpu")
+        state_dict = load_file(model_file, device="cpu")
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if logger is not None:
-            logger.info(f"Missing keys: {len(missing)}; Unexpected keys: {len(unexpected)};")
+            logger.info(
+                f"Missing keys: {len(missing)}; Unexpected keys: {len(unexpected)};")
         assert len(unexpected) == 0
 
-        params = [p.numel() if "motion_modules." in n else 0 for n, p in model.named_parameters()]
+        params = [p.numel() if "motion_modules." in n else 0 for n,
+                  p in model.named_parameters()]
         if logger is not None:
             logger.info(f"Motion module parameters: {sum(params) / 1e6} M")
 
@@ -833,7 +879,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
     def extract_init_dict(cls, config_dict, **kwargs):
         # Skip keys that were not present in the original config, so default __init__ values were used
         used_defaults = config_dict.get("_use_default_values", [])
-        config_dict = {k: v for k, v in config_dict.items() if k not in used_defaults and k != "_use_default_values"}
+        config_dict = {k: v for k, v in config_dict.items(
+        ) if k not in used_defaults and k != "_use_default_values"}
 
         # 0. Copy origin config dict
         original_dict = dict(config_dict.items())
@@ -855,7 +902,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
         expected_keys = expected_keys.union(super_expected_keys)
 
         # remove private attributes
-        config_dict = {k: v for k, v in config_dict.items() if not k.startswith("_")}
+        config_dict = {k: v for k, v in config_dict.items()
+                       if not k.startswith("_")}
 
         # 3. Create keyword arguments that will be passed to __init__ from expected keyword arguments
         init_dict = {}
@@ -884,7 +932,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
         unused_kwargs = {**config_dict, **kwargs}
 
         # 7. Define "hidden" config parameters that were saved for compatible classes
-        hidden_config_dict = {k: v for k, v in original_dict.items() if k not in init_dict}
+        hidden_config_dict = {k: v for k,
+                              v in original_dict.items() if k not in init_dict}
 
         return init_dict, unused_kwargs, hidden_config_dict
 
@@ -920,9 +969,11 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                     pose_feature_dim = pose_feature_dimensions[block_id] if add_pose_adaptor else None
                 elif name.startswith("up_blocks"):
                     block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(self.config.block_out_channels))[block_id]
+                    hidden_size = list(reversed(self.config.block_out_channels))[
+                        block_id]
                     add_pose_adaptor = attention_name in set_processor_names
-                    pose_feature_dim = list(reversed(pose_feature_dimensions))[block_id] if add_pose_adaptor else None
+                    pose_feature_dim = list(reversed(pose_feature_dimensions))[
+                        block_id] if add_pose_adaptor else None
                 else:
                     assert name.startswith("down_blocks")
                     block_id = int(name[len("down_blocks.")])
@@ -949,12 +1000,14 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                     spatial_attn_procs[name] = CustomizedAttnProcessor()
         elif (not add_spatial) and add_spatial_lora:
             for name in self.attn_processors.keys():
-                cross_attention_dim = None if name.endswith("attn1.processor") else self.config.cross_attention_dim
+                cross_attention_dim = None if name.endswith(
+                    "attn1.processor") else self.config.cross_attention_dim
                 if name.startswith("mid_block"):
                     hidden_size = self.config.block_out_channels[-1]
                 elif name.startswith("up_blocks"):
                     block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(self.config.block_out_channels))[block_id]
+                    hidden_size = list(reversed(self.config.block_out_channels))[
+                        block_id]
                 elif name.startswith("down_blocks"):
                     block_id = int(name[len("down_blocks.")])
                     hidden_size = self.config.block_out_channels[block_id]
@@ -982,9 +1035,12 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                     pose_feature_dim = pose_feature_dimensions[block_id] if add_pose_adaptor else None
                 elif name.startswith("up_blocks"):
                     block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(self.config.block_out_channels))[block_id]
-                    add_pose_adaptor = (attention_name in set_processor_names) and self.decoder_add_posecond
-                    pose_feature_dim = list(reversed(pose_feature_dimensions))[block_id] if add_pose_adaptor else None
+                    hidden_size = list(reversed(self.config.block_out_channels))[
+                        block_id]
+                    add_pose_adaptor = (
+                        attention_name in set_processor_names) and self.decoder_add_posecond
+                    pose_feature_dim = list(reversed(pose_feature_dimensions))[
+                        block_id] if add_pose_adaptor else None
                 elif name.startswith("down_blocks"):
                     block_id = int(name[len("down_blocks.")])
                     hidden_size = self.config.block_out_channels[block_id]
@@ -1015,7 +1071,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                     hidden_size = self.config.block_out_channels[-1]
                 elif name.startswith("up_blocks"):
                     block_id = int(name[len("up_blocks.")])
-                    hidden_size = list(reversed(self.config.block_out_channels))[block_id]
+                    hidden_size = list(reversed(self.config.block_out_channels))[
+                        block_id]
                 elif name.startswith("down_blocks"):
                     block_id = int(name[len("down_blocks.")])
                     hidden_size = self.config.block_out_channels[block_id]
@@ -1059,7 +1116,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
         upsample_size = None
 
         if any(s % default_overall_up_factor != 0 for s in sample.shape[-2:]):
-            self.logger.info("Forward upsample size to force interpolation output size.")
+            self.logger.info(
+                "Forward upsample size to force interpolation output size.")
             forward_upsample_size = True
 
         # prepare attention_mask
@@ -1080,7 +1138,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                 dtype = torch.float32 if is_mps else torch.float64
             else:
                 dtype = torch.int32 if is_mps else torch.int64
-            timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
+            timesteps = torch.tensor(
+                [timesteps], dtype=dtype, device=sample.device)
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
 
@@ -1097,7 +1156,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
 
         if self.class_embedding is not None:
             if class_labels is None:
-                raise ValueError("class_labels should be provided when num_class_embeds > 0")
+                raise ValueError(
+                    "class_labels should be provided when num_class_embeds > 0")
 
             if self.config.class_embed_type == "timestep":
                 class_labels = self.time_proj(class_labels)
@@ -1107,7 +1167,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
 
         # extend encoder_hidden_states
         video_length = sample.shape[2]
-        encoder_hidden_states = repeat(encoder_hidden_states, "b n c -> (b f) n c", f=video_length)
+        encoder_hidden_states = repeat(
+            encoder_hidden_states, "b n c -> (b f) n c", f=video_length)
 
         # pre-process
         sample = self.conv_in(sample)           # b c f h w
@@ -1144,30 +1205,37 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     motion_module_alpha=motion_module_alpha,
-                    cross_attention_kwargs=cross_attention_kwargs.update({"pose_feature": pose_embedding_feature})
+                    cross_attention_kwargs=cross_attention_kwargs.update(
+                        {"pose_feature": pose_embedding_feature})
                     if cross_attention_kwargs is not None else {"pose_feature": pose_embedding_feature},
-                    motion_cross_attention_kwargs={"pose_feature": pose_embedding_feature}
+                    motion_cross_attention_kwargs={
+                        "pose_feature": pose_embedding_feature}
                 )
             else:
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     motion_module_alpha=motion_module_alpha,
-                    cross_attention_kwargs=cross_attention_kwargs.update({"pose_feature": pose_embedding_feature})
+                    cross_attention_kwargs=cross_attention_kwargs.update(
+                        {"pose_feature": pose_embedding_feature})
                     if cross_attention_kwargs is not None else {"pose_feature": pose_embedding_feature},
-                    motion_cross_attention_kwargs={"pose_feature": pose_embedding_feature}
+                    motion_cross_attention_kwargs={
+                        "pose_feature": pose_embedding_feature}
                 )
 
             # to be fused
             for sample_idx, fuser in enumerate(down_fuser):
                 if fuser != None:
                     fused_sample = fuser(
-                        init_hidden_state=res_samples[sample_idx][:, :, :1].contiguous(),
-                        post_hidden_states=res_samples[sample_idx][:, :, 1:].contiguous(),
+                        init_hidden_state=res_samples[sample_idx][:, :, :1].contiguous(
+                        ),
+                        post_hidden_states=res_samples[sample_idx][:, :, 1:].contiguous(
+                        ),
                         temb=emb_single,
                     )
                     res_samples = list(res_samples)
-                    res_samples[sample_idx] = torch.cat([res_samples[sample_idx][:, :, :1], fused_sample], dim=2)
+                    res_samples[sample_idx] = torch.cat(
+                        [res_samples[sample_idx][:, :, :1], fused_sample], dim=2)
                     res_samples = tuple(res_samples)
 
             down_block_res_samples += res_samples
@@ -1182,7 +1250,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                 if len(down_block_additional_residual.shape) == 4:
                     # b c h w
                     # if input single condition, apply it to all frames
-                    down_block_additional_residual = down_block_additional_residual.unsqueeze(2)
+                    down_block_additional_residual = down_block_additional_residual.unsqueeze(
+                        2)
                     # boardcast will solve the problem
                     # down_block_additional_residual = repeat(down_block_additional_residual, "b c f h w -> b c (f n) h w", n=video_length)
 
@@ -1198,9 +1267,11 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
             motion_module_alpha=motion_module_alphas[-1],
-            cross_attention_kwargs=cross_attention_kwargs.update({"pose_feature": pose_embedding_features[-1]})
+            cross_attention_kwargs=cross_attention_kwargs.update(
+                {"pose_feature": pose_embedding_features[-1]})
             if cross_attention_kwargs is not None else {"pose_feature": pose_embedding_features[-1]},
-            motion_cross_attention_kwargs={"pose_feature": pose_embedding_features[-1]}
+            motion_cross_attention_kwargs={
+                "pose_feature": pose_embedding_features[-1]}
         )
 
         # mid block fuser
@@ -1215,7 +1286,8 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
         # support controlnet
         if mid_block_additional_residual is not None:
             if len(mid_block_additional_residual.shape) == 4:
-                mid_block_additional_residual = mid_block_additional_residual.unsqueeze(2)
+                mid_block_additional_residual = mid_block_additional_residual.unsqueeze(
+                    2)
                 # boardcast will solve this problemq
                 # mid_block_additional_residual = repeat(mid_block_additional_residual, "b c f h w -> b c (f n) h w", n=video_length)
 
@@ -1224,10 +1296,12 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
         # up
         for i, (upsample_block, motion_module_alpha) in enumerate(zip(self.up_blocks, motion_module_alphas[:-1][::-1])):
             is_final_block = i == len(self.up_blocks) - 1
-            pose_embedding_feature = pose_embedding_features[-(i+1)] if self.decoder_add_posecond else None
+            pose_embedding_feature = pose_embedding_features[-(
+                i+1)] if self.decoder_add_posecond else None
 
             res_samples = down_block_res_samples[-len(upsample_block.resnets):]
-            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+            down_block_res_samples = down_block_res_samples[: -len(
+                upsample_block.resnets)]
 
             # if we have not reached the final block and need to forward the
             # upsample size, we do it here
@@ -1244,9 +1318,11 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                         upsample_size=upsample_size,
                         attention_mask=attention_mask,
                         motion_module_alpha=motion_module_alpha,
-                        cross_attention_kwargs=cross_attention_kwargs.update({"pose_feature": pose_embedding_feature})
+                        cross_attention_kwargs=cross_attention_kwargs.update(
+                            {"pose_feature": pose_embedding_feature})
                         if cross_attention_kwargs is not None else {"pose_feature": pose_embedding_feature},
-                        motion_cross_attention_kwargs={"pose_feature": pose_embedding_feature}
+                        motion_cross_attention_kwargs={
+                            "pose_feature": pose_embedding_feature}
                     )
                 else:
                     sample = upsample_block(
@@ -1255,9 +1331,11 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
                         res_hidden_states_tuple=res_samples,
                         upsample_size=upsample_size,
                         motion_module_alpha=motion_module_alpha,
-                        cross_attention_kwargs=cross_attention_kwargs.update({"pose_feature": pose_embedding_feature})
+                        cross_attention_kwargs=cross_attention_kwargs.update(
+                            {"pose_feature": pose_embedding_feature})
                         if cross_attention_kwargs is not None else {"pose_feature": pose_embedding_feature},
-                        motion_cross_attention_kwargs={"pose_feature": pose_embedding_feature}
+                        motion_cross_attention_kwargs={
+                            "pose_feature": pose_embedding_feature}
                     )
             else:
                 if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
@@ -1298,3 +1376,28 @@ class UNet3DConditionModelPoseCond(UNet3DConditionModel):
             return UNet3DConditionOutput(sample=sample), activations
         else:
             return UNet3DConditionOutput(sample=sample)
+
+
+if __name__ == "__main__":
+    # test
+    from omegaconf import OmegaConf
+    config_file = '/hpc2hdd/home/hongfeizhang/hongfei_workspace/CameraCtrl/configs/train_cameractrl/adv3_256_384_cameractrl_relora.yaml'
+    unet_addtional_args_config = OmegaConf.load(config_file)
+    origin_unet = UNet3DConditionModel.from_pretrained_2d(
+        pretrained_model_path='/hpc2hdd/home/hongfeizhang/hf_cache/hub/models--stable-diffusion-v1-5--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14',
+        subfolder="unet",
+        unet_additional_kwargs=unet_addtional_args_config.unet_additional_kwargs,
+    )
+    model = UNet3DConditionModelPoseCond.from_pretrained_2d(
+        pretrained_model_path='/hpc2hdd/home/hongfeizhang/hf_cache/hub/models--stable-diffusion-v1-5--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14',
+        subfolder="unet",
+        unet_additional_kwargs=unet_addtional_args_config.unet_additional_kwargs,
+    )
+    pose_encoder_kwargs = unet_addtional_args_config.pose_encoder_kwargs
+    pose_encoder = CameraPoseEncoder(**pose_encoder_kwargs)
+    print(
+        f"Sum of parameters of origin unet: {sum(p.numel() for p in origin_unet.parameters()) / 1e6} M")
+    print(
+        f"Sum of parameters of unet: {sum(p.numel() for p in model.parameters()) / 1e6} M")
+    print(
+        f"Sum of parameters of pose encoder: {sum(p.numel() for p in pose_encoder.parameters()) / 1e6} M")

@@ -250,6 +250,8 @@ class PoseAdaptorAttnProcessor(nn.Module):
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
         if self.query_condition and self.key_value_condition:  # only self attention
+            # print(f"self.qkv_merge(hidden_states + pose_feature) * pose_embedding_scale shape: {self.qkv_merge(hidden_states + pose_feature).shape}")
+            # print(f"hidden_states shape: {hidden_states.shape}")
             query_hidden_state = self.qkv_merge(hidden_states + pose_feature) * pose_embedding_scale + hidden_states
             key_value_hidden_state = query_hidden_state
         elif self.query_condition:

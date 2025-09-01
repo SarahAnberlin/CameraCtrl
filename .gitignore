@@ -27,3 +27,12 @@ models/StableDiffusion/*
 !models/DreamBooth_LoRA/*.txt
 !models/MotionLoRA/
 !models/MotionLoRA/*.txt
+
+RealEstate10K/
+fused_lora/
+
+CameraCtrl.ckpt
+v3_sd15_mm.ckpt
+v3_sd15_adapter.ckpt
+RealEstate10K_LoRA.ckpt
+RealEstate10K.tar.gz

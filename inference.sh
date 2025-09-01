@@ -1,0 +1,11 @@
+python inference.py \
+      --out_root 'res' \
+      --ori_model_path '/hpc2hdd/home/hongfeizhang/hf_cache/hub/models--stable-diffusion-v1-5--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14' \
+      --unet_subfolder 'unet' \
+      --motion_module_ckpt 'v3_sd15_mm.ckpt' \
+      --pose_adaptor_ckpt 'CameraCtrl.ckpt' \
+      --model_config configs/train_cameractrl/adv3_256_384_cameractrl_relora.yaml \
+      --visualization_captions assets/cameractrl_prompts.json \
+      --use_specific_seeds \
+      --trajectory_file assets/pose_files/0f47577ab3441480.txt \
+      --n_procs 1
